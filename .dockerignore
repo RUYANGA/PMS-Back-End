@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+.github
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Build outputs
+dist
+build
+
+# Development and testing
+coverage
+.nyc_output
+test
+**/*.spec.ts
+**/*.test.ts
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE specific files
+.vscode
+.idea
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+
+# Temporary files
+.tmp
+.temp
+tmp
+temp
+
+# Drafts folder (already in .gitignore)
+drafts
+*.draft
+
+# Log files
+logs
+*.log
+
+# Misc
+README.md
+LICENSE
+CHANGELOG.md
+.eslintrc
+.eslintignore
+.prettierrc
+.editorconfig
+
+# Keep essential files for build
+# Note: Don't ignore prisma directory since it's needed for migration and client generation
+# !prisma
+# !scripts/entrypoint.sh

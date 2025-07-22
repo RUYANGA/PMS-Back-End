@@ -1,0 +1,515 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//────────────────────────────────────────────────────────────
+//  ENUMS
+//────────────────────────────────────────────────────────────
+enum UserType {
+  STUDENT
+  STAFF
+  INDIVIDUAL
+  ORGANISATION
+}
+
+enum StakeholderRole {
+  OWNER
+  PARTNER
+  SPONSOR
+  REGULATOR
+  BENEFICIARY
+}
+
+enum ProjectStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  FUNDED
+  COMPLETED
+  ARCHIVED
+}
+
+enum IpType {
+  PATENT
+  UTILITY_MODEL
+  COPYRIGHT
+  TRADEMARK
+  NONE
+}
+
+enum AuthorRole {
+  LEAD
+  CO_AUTHOR
+  SUPERVISOR
+}
+
+enum EvaluationStatus {
+  PENDING
+  COMPLETED
+}
+
+//────────────────────────────────────────────────────────────
+//  CATEGORY TAG HIERARCHY
+//────────────────────────────────────────────────────────────
+model Category {
+  id          String     @id @default(uuid()) @db.Uuid
+  parentId    String?    @map("parent_id") @db.Uuid
+  name        String
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  // Self-referential relationship
+  parent   Category?  @relation("CategoryParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children Category[] @relation("CategoryParent")
+
+  // Relations
+  projectCategories ProjectCategory[]
+
+  @@unique([parentId, name])
+  @@index([parentId])
+  @@map("category")
+}
+
+//────────────────────────────────────────────────────────────
+//  CORE BUSINESS ENTITIES (Organization & User Flow)
+//────────────────────────────────────────────────────────────
+/// Organizational structure hierarchy
+model OrganisationUnit {
+  id        String    @id @default(uuid()) @db.Uuid
+  parentId  String?   @map("parent_id") @db.Uuid
+  name      String
+  code      String?   @unique
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  // Self-referential relationship
+  parent   OrganisationUnit?  @relation("OrganisationUnitParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children OrganisationUnit[] @relation("OrganisationUnitParent")
+
+  // Related entities
+  positions    Position[]
+  roles        Role[]
+  projects     Project[]
+  stakeholders Stakeholder[]
+
+  @@index([parentId])
+  @@map("organisation_unit")
+}
+
+/// Job positions within organizational units
+model Position {
+  id                 String           @id @default(uuid()) @db.Uuid
+  organisationUnitId String           @map("organisation_unit_id") @db.Uuid
+  title              String
+  description        String?
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  organisationUnit OrganisationUnit @relation(fields: [organisationUnitId], references: [id], onDelete: Cascade)
+  userPositions    UserPosition[]
+
+  @@index([organisationUnitId])
+  @@map("position")
+}
+
+/// Central user management
+model User {
+  id         String    @id @default(uuid()) @db.Uuid
+  firstName  String?   @map("first_name")
+  lastName   String?   @map("last_name")
+  username   String?   @unique
+  userType   UserType  @map("user_type")
+  email      String?   @unique
+  phone      String?   @unique
+  password   String?
+  isVerified Boolean   @default(false) @map("is_verified")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  userPositions     UserPosition[]
+  userRoles         UserRole[]
+  projectAuthors    ProjectAuthor[]
+  projectReports    ProjectReport[]
+  uploadedAttachments Attachment[] @relation("UserAttachments")
+  projectEvaluations ProjectEvaluation[]
+  stakeholderUsers  StakeholderUser[]
+
+  @@map("user")
+}
+
+/// Role-based access control roles
+model Role {
+  id                 String           @id @default(uuid()) @db.Uuid
+  name               String
+  description        String?
+  organisationUnitId String?          @map("organisation_unit_id") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  organisationUnit OrganisationUnit? @relation(fields: [organisationUnitId], references: [id], onDelete: Cascade)
+  rolePermissions  RolePermission[]
+  userRoles        UserRole[]
+
+  @@unique([organisationUnitId, name])
+  @@index([organisationUnitId])
+  @@map("role")
+}
+
+/// System permissions for RBAC
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  @@map("permission")
+}
+
+//────────────────────────────────────────────────────────────
+//  JUNCTION/RELATIONSHIP TABLES (User & Organization)
+//────────────────────────────────────────────────────────────
+/// Links users to positions with time tracking
+model UserPosition {
+  userId     String    @map("user_id") @db.Uuid
+  positionId String    @map("position_id") @db.Uuid
+  startDate  DateTime  @default(now()) @map("start_date")
+  endDate    DateTime? @map("end_date")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  position Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, positionId, startDate])
+  @@index([userId])
+  @@index([positionId])
+  @@map("user_position")
+}
+
+/// Links users to roles for access control
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_role")
+}
+
+/// Links roles to permissions for RBAC
+model RolePermission {
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+//────────────────────────────────────────────────────────────
+//  STAKEHOLDERS & FUNDERS
+//────────────────────────────────────────────────────────────
+/// Independent funding entity
+model Funder {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String    @unique
+  funderType   String    @map("funder_type")
+  contactEmail String?   @map("contact_email")
+  contactPhone String?   @map("contact_phone")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  projectFunders ProjectFunder[]
+
+  @@map("funder")
+}
+
+/// Project stakeholders
+model Stakeholder {
+  id              String  @id @default(uuid()) @db.Uuid
+  name            String
+  stakeholderType String  @map("stakeholder_type")
+  contactEmail    String? @map("contact_email")
+  contactPhone    String? @map("contact_phone")
+  organisationUnitId String? @map("organisation_unit_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organisationUnit  OrganisationUnit? @relation(fields: [organisationUnitId], references: [id], onDelete: SetNull)
+  stakeholderUsers  StakeholderUser[]
+  projectStakeholders ProjectStakeholder[]
+
+  @@index([organisationUnitId])
+  @@map("stakeholder")
+}
+
+/// Links stakeholders to users
+model StakeholderUser {
+  stakeholderId String          @map("stakeholder_id") @db.Uuid
+  userId        String          @map("user_id") @db.Uuid
+  role          StakeholderRole @default(BENEFICIARY)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  stakeholder Stakeholder @relation(fields: [stakeholderId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([stakeholderId, userId])
+  @@index([stakeholderId])
+  @@index([userId])
+  @@map("stakeholder_user")
+}
+
+//────────────────────────────────────────────────────────────
+//  PROJECT ENTITIES
+//────────────────────────────────────────────────────────────
+/// Core project entity
+model Project {
+  id                 String        @id @default(uuid()) @db.Uuid
+  title              String
+  titleNorm          String        @map("title_norm")
+  abstract           String?
+  projectType        String        @map("project_type")
+  year               Int
+  status             ProjectStatus @default(PENDING)
+  submittedAt        DateTime      @default(now()) @map("submitted_at")
+  innovationField    String?       @map("innovation_field")
+  expectedIp         IpType?       @map("expected_ip")
+  progressPercent    Decimal?      @db.Decimal(5,2) @map("progress_percent")
+  organisationUnitId String        @map("organisation_unit_id") @db.Uuid
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  organisationUnit     OrganisationUnit     @relation(fields: [organisationUnitId], references: [id], onDelete: Cascade)
+  projectAuthors       ProjectAuthor[]
+  projectReports       ProjectReport[]
+  projectEvaluations   ProjectEvaluation[]
+  projectCategories    ProjectCategory[]
+  projectFunders       ProjectFunder[]
+  projectStakeholders  ProjectStakeholder[]
+  attachments          Attachment[]
+  projectSdgs          ProjectSdg[]
+  startup              Startup?
+
+  @@index([organisationUnitId])
+  @@index([status])
+  @@index([year])
+  @@map("project")
+}
+
+/// Project authors junction table
+model ProjectAuthor {
+  id        String     @id @default(uuid()) @db.Uuid
+  projectId String     @map("project_id") @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  role      AuthorRole @default(CO_AUTHOR)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_author")
+}
+
+/// Project reports (replaces TimeEntry)
+model ProjectReport {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  title           String
+  reportingPeriod String?  @map("reporting_period")
+  content         String?
+  fundUsage       Decimal? @db.Decimal(12,2) @map("fund_usage")
+  submittedAt     DateTime @default(now()) @map("submitted_at")
+  submittedById   String   @map("submitted_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  submittedBy User    @relation(fields: [submittedById], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([submittedById])
+  @@map("project_report")
+}
+
+/// Links projects to categories
+model ProjectCategory {
+  projectId  String   @map("project_id") @db.Uuid
+  categoryId String   @map("category_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, categoryId])
+  @@index([projectId])
+  @@index([categoryId])
+  @@map("project_category")
+}
+
+/// Links projects to funders
+model ProjectFunder {
+  projectId String   @map("project_id") @db.Uuid
+  funderId  String   @map("funder_id") @db.Uuid
+  amount    Decimal? @db.Decimal(12,2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  funder  Funder  @relation(fields: [funderId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, funderId])
+  @@index([projectId])
+  @@index([funderId])
+  @@map("project_funder")
+}
+
+/// Links projects to stakeholders
+model ProjectStakeholder {
+  projectId     String          @map("project_id") @db.Uuid
+  stakeholderId String          @map("stakeholder_id") @db.Uuid
+  role          StakeholderRole @default(BENEFICIARY)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stakeholder Stakeholder @relation(fields: [stakeholderId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, stakeholderId])
+  @@index([projectId])
+  @@index([stakeholderId])
+  @@map("project_stakeholder")
+}
+/// File attachments for projects
+model Attachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  projectId  String?  @map("project_id") @db.Uuid
+  uploaderId String   @map("uploader_id") @db.Uuid
+  filename   String
+  url        String
+  fileType   String?  @map("file_type")
+  fileSize   Int?     @map("file_size")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User     @relation("UserAttachments", fields: [uploaderId], references: [id], onDelete: Cascade)
+  
+  @@index([projectId])
+  @@index([uploaderId])
+  @@map("attachment")
+}
+
+/// Sustainable Development Goal entity
+model Sdg {
+  id          String     @id @default(uuid()) @db.Uuid
+  number      Int        @unique
+  title       String
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  
+  // Relations
+  projectSdgs ProjectSdg[]
+  
+  @@index([number])
+  @@map("sdg")
+}
+
+/// Links projects to SDGs
+model ProjectSdg {
+  projectId String   @map("project_id") @db.Uuid
+  sdgId     String   @map("sdg_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sdg     Sdg     @relation(fields: [sdgId], references: [id], onDelete: Cascade)
+  
+  @@id([projectId, sdgId])
+  @@index([projectId])
+  @@index([sdgId])
+  @@map("project_sdg")
+}
+
+model Startup {
+  id          String   @id @default(uuid()) @db.Uuid
+  projectId   String   @unique @map("project_id") @db.Uuid
+  name        String
+  description String?
+  year        Int
+  registered  Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@index([projectId])
+  @@map("startup")
+}
+
+model ProjectEvaluation {
+  id          String           @id @default(uuid()) @db.Uuid
+  projectId   String           @map("project_id") @db.Uuid
+  evaluatorId String           @map("evaluator_id") @db.Uuid
+  score       Int
+  comments    String?
+  status      EvaluationStatus @default(PENDING)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  
+  // Relations
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  evaluator User    @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+  
+  @@index([projectId])
+  @@index([evaluatorId])
+  @@map("project_evaluation")
+}
